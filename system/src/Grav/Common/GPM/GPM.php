@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.GPM
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -13,7 +13,7 @@ use Grav\Common\Filesystem\Folder;
 use Grav\Common\Inflector;
 use Grav\Common\Iterator;
 use Grav\Common\Utils;
-use Symfony\Component\Yaml\Yaml;
+use RocketTheme\Toolbox\File\YamlFile;
 
 class GPM extends Iterator
 {
@@ -513,7 +513,7 @@ class GPM extends Iterator
         $filename = basename($package['path']);
 
         if (Grav::instance()['config']->get('system.gpm.official_gpm_only') && $package['host'] !== 'getgrav.org') {
-            throw new \RuntimeException("Only offical GPM URLs are allowed.  You can modify this behavior in the System configuration.");
+            throw new \RuntimeException("Only official GPM URLs are allowed. You can modify this behavior in the System configuration.");
         }
 
         $output = Response::get($package_file, []);
@@ -599,9 +599,11 @@ class GPM extends Iterator
      */
     public static function getPackageName($source)
     {
+        $ignore_yaml_files = ['blueprints', 'languages'];
+
         foreach (glob($source . "*.yaml") as $filename) {
             $name = strtolower(basename($filename, '.yaml'));
-            if ($name == 'blueprints') {
+            if (in_array($name, $ignore_yaml_files)) {
                 continue;
             }
             return $name;
@@ -622,7 +624,10 @@ class GPM extends Iterator
             return false;
         }
 
-        $blueprint = (array)Yaml::parse(file_get_contents($blueprint_file));
+        $file = YamlFile::instance($blueprint_file);
+        $blueprint = (array)$file->content();
+        $file->free();
+
         return $blueprint;
     }
 
@@ -717,8 +722,8 @@ class GPM extends Iterator
         foreach ($packages as $package_name => $package) {
             if (isset($package['dependencies'])) {
                 foreach ($package['dependencies'] as $dependency) {
-                    if (is_array($dependency)) {
-                        $dependency = array_keys($dependency)[0];
+                    if (is_array($dependency) && isset($dependency['name'])) {
+                        $dependency = $dependency['name'];
                     }
 
                     if ($dependency == $slug) {
@@ -833,6 +838,20 @@ class GPM extends Iterator
                 continue;
             }
 
+            // Check PHP version
+            if ($dependency_slug == 'php') {
+                $current_php_version = phpversion();
+                if (version_compare($this->calculateVersionNumberFromDependencyVersion($dependencyVersionWithOperator),
+                        $current_php_version) === 1
+                ) {
+                    //Needs a Grav update first
+                    throw new \Exception("<red>One of the packages require PHP " . $dependencies['php'] . ". Please update PHP to resolve this");
+                } else {
+                    unset($dependencies[$dependency_slug]);
+                    continue;
+                }
+            }
+
             //First, check for Grav dependency. If a dependency requires Grav > the current version, abort and tell.
             if ($dependency_slug == 'grav') {
                 if (version_compare($this->calculateVersionNumberFromDependencyVersion($dependencyVersionWithOperator),
@@ -857,7 +876,9 @@ class GPM extends Iterator
                 // get currently installed version
                 $locator = Grav::instance()['locator'];
                 $blueprints_path = $locator->findResource('plugins://' . $dependency_slug . DS . 'blueprints.yaml');
-                $package_yaml = Yaml::parse(file_get_contents($blueprints_path));
+                $file = YamlFile::instance($blueprints_path);
+                $package_yaml = $file->content();
+                $file->free();
                 $currentlyInstalledVersion = $package_yaml['version'];
 
                 // if requirement is next significant release, check is compatible with currently installed version, might not be
@@ -1060,9 +1081,9 @@ class GPM extends Iterator
         } elseif ($version == '') {
             return null;
         } elseif ($this->versionFormatIsNextSignificantRelease($version)) {
-            return substr($version, 1);
+            return trim(substr($version, 1));
         } elseif ($this->versionFormatIsEqualOrHigher($version)) {
-            return substr($version, 2);
+            return trim(substr($version, 2));
         } else {
             return $version;
         }
